@@ -12,12 +12,20 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     app_name: str = "rag-app"
+    app_version: str = "0.1.0"
     api_v1_prefix: str = "/api/v1"
     backend_base_url: str = "http://localhost:8000"
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Logging
+    log_level: str = "INFO"
+    log_json: bool = False
+
     # PostgreSQL
     database_url: str
+    db_echo: bool = False
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
 
     # Qdrant
     qdrant_url: str
@@ -53,6 +61,10 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 5
     retrieval_score_threshold: float = 0.30
     max_context_chars: int = 8000
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() == "production"
 
 
 @lru_cache
