@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
 
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> Self:
         jwt_key = self.jwt_secret_key.get_secret_value()

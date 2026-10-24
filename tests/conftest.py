@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -17,12 +18,13 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401  (registers every model on Base.metadata)
-from app.api.deps import get_google_oauth
+from app.api.deps import get_google_oauth, get_storage
 from app.core.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
 from app.services.google_oauth import GoogleOAuthService
+from app.services.storage import LocalStorage
 
 _schema_ready = False
 
@@ -72,6 +74,12 @@ def session_factory(db_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(db_engine, expire_on_commit=False)
 
 
+@pytest.fixture
+def storage(tmp_path: Path) -> LocalStorage:
+    """Each test gets its own throwaway upload directory."""
+    return LocalStorage(tmp_path / "storage")
+
+
 class GoogleHarness:
     """The real GoogleOAuthService, with its two network calls replaced by fakes."""
 
@@ -106,7 +114,12 @@ def google(test_settings: Settings) -> GoogleHarness:
 
 
 @pytest.fixture
-def api_app(db_engine: AsyncEngine, test_settings: Settings, google: GoogleHarness) -> FastAPI:
+def api_app(
+    db_engine: AsyncEngine,
+    test_settings: Settings,
+    google: GoogleHarness,
+    storage: LocalStorage,
+) -> FastAPI:
     application = create_app()
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
@@ -117,6 +130,7 @@ def api_app(db_engine: AsyncEngine, test_settings: Settings, google: GoogleHarne
     application.dependency_overrides[get_db] = override_get_db
     application.dependency_overrides[get_settings] = lambda: test_settings
     application.dependency_overrides[get_google_oauth] = lambda: google.service
+    application.dependency_overrides[get_storage] = lambda: storage
     return application
 
 
@@ -142,3 +156,47 @@ def sign_in(api_client: AsyncClient, google: GoogleHarness) -> Callable[..., Awa
         )
 
     return _sign_in
+
+
+async def _auth_headers(
+    sign_in: Callable[..., Awaitable[Response]], **claims: Any
+) -> dict[str, str]:
+    response = await sign_in(**claims)
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest.fixture
+async def alice(sign_in: Callable[..., Awaitable[Response]]) -> dict[str, str]:
+    """Authorization headers for user Alice."""
+    return await _auth_headers(
+        sign_in, sub="google-sub-alice", email="alice@example.com", name="Alice"
+    )
+
+
+@pytest.fixture
+async def bob(sign_in: Callable[..., Awaitable[Response]]) -> dict[str, str]:
+    """Authorization headers for user Bob."""
+    return await _auth_headers(sign_in, sub="google-sub-bob", email="bob@example.com", name="Bob")
+
+
+@pytest.fixture
+def upload(api_client: AsyncClient) -> Callable[..., Awaitable[Response]]:
+    async def _upload(
+        headers: dict[str, str],
+        *,
+        filename: str = "notes.txt",
+        content: bytes = b"hello world",
+        name: str | None = None,
+        key: str | None = None,
+    ) -> Response:
+        request_headers = dict(headers)
+        if key:
+            request_headers["Idempotency-Key"] = key
+        return await api_client.post(
+            "/api/v1/documents",
+            files={"file": (filename, content, "application/octet-stream")},
+            data={"name": name} if name else {},
+            headers=request_headers,
+        )
+
+    return _upload

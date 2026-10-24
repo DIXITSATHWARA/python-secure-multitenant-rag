@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.error_handlers import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
+from app.core.upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
 from app.db.session import engine
 
 logger = logging.getLogger(__name__)
@@ -39,14 +40,20 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_enabled else None,
     )
 
-    # Middleware added later wraps earlier ones, so RequestContext is outermost.
+    # Middleware added later wraps earlier ones: upload limit is innermost, then CORS
+    # (so 413 responses carry CORS headers), then RequestContext (outermost).
+    app.add_middleware(
+        UploadSizeLimitMiddleware,
+        path=f"{settings.api_v1_prefix}/documents",
+        max_bytes=settings.max_upload_bytes + MULTIPART_OVERHEAD_BYTES,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,  # explicit list, never "*" with credentials
         allow_credentials=True,  # needed for the HttpOnly refresh-token cookie
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
-        expose_headers=["X-Request-ID"],
+        expose_headers=["X-Request-ID", "Location"],
     )
     app.add_middleware(RequestContextMiddleware)
 

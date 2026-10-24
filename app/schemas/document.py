@@ -31,3 +31,10 @@ class DocumentStatusRead(BaseModel):
     chunk_count: int
     error_message: str | None
     updated_at: datetime
+
+
+class DocumentPage(BaseModel):
+    items: list[DocumentRead]
+    total: int
+    limit: int
+    offset: int
