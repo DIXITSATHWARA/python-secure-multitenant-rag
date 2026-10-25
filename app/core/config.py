@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     openai_chat_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 30.0
     openai_max_retries: int = 3
+    openai_chat_max_output_tokens: int = 1000
+    openai_chat_temperature: float = 0.2  # negative = don't send it (some models reject it)
 
     # Auth
     jwt_secret_key: SecretStr
@@ -112,6 +114,12 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_BATCH_SIZE must be between 1 and 512")
         if self.worker_concurrency < 1:
             raise ValueError("WORKER_CONCURRENCY must be at least 1")
+        if not 1 <= self.retrieval_top_k <= 50:
+            raise ValueError("RETRIEVAL_TOP_K must be between 1 and 50")
+        if not 0.0 <= self.retrieval_score_threshold <= 1.0:
+            raise ValueError("RETRIEVAL_SCORE_THRESHOLD must be between 0 and 1")
+        if self.max_context_chars < 500:
+            raise ValueError("MAX_CONTEXT_CHARS must be at least 500")
         return self
 
 

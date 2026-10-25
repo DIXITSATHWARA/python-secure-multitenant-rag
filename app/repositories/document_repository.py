@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Collection
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,6 +86,19 @@ class DocumentRepository:
             .offset(offset)
         )
         return list(rows.scalars().all()), total
+
+    async def get_completed_names(
+        self, user_id: uuid.UUID, document_ids: Collection[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """{id: name} for those of `document_ids` that belong to the user AND are completed."""
+        if not document_ids:
+            return {}
+        stmt = select(Document.id, Document.name).where(
+            Document.user_id == user_id,
+            Document.id.in_(list(document_ids)),
+            Document.status == DocumentStatus.COMPLETED,
+        )
+        return {row.id: row.name for row in await self.db.execute(stmt)}
 
     # ---- worker-only (not scoped to a user) -------------------------------------------
 

@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ApiException, ResponseHandlingException
@@ -19,6 +20,14 @@ logger = logging.getLogger(__name__)
 def chunk_point_id(document_id: uuid.UUID, index: int) -> str:
     """Deterministic point ID: re-processing a document overwrites its points, never duplicates."""
     return str(uuid.uuid5(document_id, str(index)))
+
+
+@dataclass(frozen=True)
+class RetrievedChunk:
+    document_id: uuid.UUID
+    chunk_index: int
+    text: str
+    score: float  # cosine similarity from Qdrant (higher = more similar)
 
 
 @contextmanager
@@ -155,6 +164,49 @@ class VectorService:
                 exact=True,
             )
         return result.count
+
+    async def search(
+        self,
+        *,
+        user_id: uuid.UUID,
+        vector: Sequence[float],
+        limit: int,
+        score_threshold: float,
+        document_id: uuid.UUID | None = None,
+    ) -> list[RetrievedChunk]:
+        """Similarity search. The owner filter is applied here, on every call, so no caller
+        can forget it. Results come back best-first."""
+        await self.ensure_collection()
+        with _upstream("search"):
+            response = await self._client.query_points(
+                collection_name=self._collection,
+                query=list(vector),
+                query_filter=self.owner_filter(user_id, document_id),
+                limit=limit,
+                score_threshold=score_threshold,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+        results: list[RetrievedChunk] = []
+        for point in response.points:
+            payload = point.payload or {}
+            # Defense in depth: even though Qdrant filtered, never trust it blindly.
+            if payload.get("user_id") != str(user_id):
+                logger.error("Qdrant returned a point owned by another user; dropping it")
+                continue
+            try:
+                results.append(
+                    RetrievedChunk(
+                        document_id=uuid.UUID(payload["document_id"]),
+                        chunk_index=int(payload["chunk_index"]),
+                        text=str(payload["text"]),
+                        score=float(point.score),
+                    )
+                )
+            except (KeyError, ValueError, TypeError):
+                logger.warning("Skipping a malformed point in search results")
+        return results
 
     async def ping(self) -> bool:
         try:

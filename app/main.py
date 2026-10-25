@@ -13,7 +13,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
 from app.db.session import engine
-from app.services.clients import build_qdrant_client
+from app.services.clients import build_openai_client, build_qdrant_client
 from app.services.vector_service import VectorService
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logger.info("Starting %s v%s (%s)", settings.app_name, settings.app_version, settings.app_env)
 
+    openai_client = build_openai_client(settings)
+    app.state.openai = openai_client
     qdrant = build_qdrant_client(settings)
     vectors = VectorService(qdrant, settings)
     app.state.vectors = vectors
@@ -36,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    await openai_client.close()
     await qdrant.close()
     await engine.dispose()  # close pooled DB connections cleanly
     logger.info("Shutdown complete")

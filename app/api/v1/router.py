@@ -1,10 +1,10 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, documents, health, users
+from app.api.v1 import auth, documents, health, rag, users
 
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(documents.router)
-# Phase 6: the rag (ask) router is added here.
+api_router.include_router(rag.router)
