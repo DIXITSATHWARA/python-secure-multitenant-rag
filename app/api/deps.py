@@ -1,7 +1,6 @@
-from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +16,8 @@ from app.repositories.user_repository import UserRepository
 from app.services.auth_service import AuthService
 from app.services.document_service import DocumentService
 from app.services.google_oauth import GoogleOAuthService
-from app.services.storage import LocalStorage, StorageBackend
+from app.services.storage import StorageBackend, build_storage
+from app.services.vector_service import VectorService
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
@@ -35,12 +35,18 @@ def get_auth_service(db: DbSession, settings: AppSettings) -> AuthService:
 
 
 def get_storage(settings: AppSettings) -> StorageBackend:
-    if settings.storage_backend == "local":
-        return LocalStorage(Path(settings.local_storage_path))
-    raise RuntimeError(f"Unsupported STORAGE_BACKEND: {settings.storage_backend}")
+    return build_storage(settings)
 
 
 Storage = Annotated[StorageBackend, Depends(get_storage)]
+
+
+def get_vector_service(request: Request) -> VectorService | None:
+    """Created once at startup (see main.py). None if startup didn't run."""
+    return getattr(request.app.state, "vectors", None)
+
+
+OptionalVectors = Annotated[VectorService | None, Depends(get_vector_service)]
 
 
 def get_document_service(db: DbSession, settings: AppSettings, storage: Storage) -> DocumentService:

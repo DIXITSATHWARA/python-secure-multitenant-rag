@@ -5,8 +5,9 @@ from fastapi import APIRouter, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import DbSession
+from app.api.deps import DbSession, OptionalVectors
 from app.schemas.health import HealthResponse, ReadinessResponse
+from app.services.vector_service import VectorService
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,15 @@ async def liveness() -> HealthResponse:
     responses={503: {"model": ReadinessResponse}},
     summary="Readiness probe",
 )
-async def readiness(db: DbSession, response: Response) -> ReadinessResponse:
-    """Can this instance serve traffic? Checks PostgreSQL (Qdrant is added in Phase 5)."""
-    checks = {"postgres": await _check_postgres(db)}
+async def readiness(
+    db: DbSession, vectors: OptionalVectors, response: Response
+) -> ReadinessResponse:
+    """Can this instance serve traffic? Checks PostgreSQL and Qdrant. OpenAI is deliberately
+    not checked: a third-party outage shouldn't take your app out of rotation."""
+    checks = {
+        "postgres": await _check_postgres(db),
+        "qdrant": await _check_qdrant(vectors),
+    }
     healthy = all(value == "ok" for value in checks.values())
     if not healthy:
         response.status_code = 503
@@ -42,3 +49,9 @@ async def _check_postgres(db: AsyncSession) -> str:
         logger.warning("PostgreSQL readiness check failed", exc_info=True)
         return "unavailable"
     return "ok"
+
+
+async def _check_qdrant(vectors: VectorService | None) -> str:
+    if vectors is None:
+        return "unavailable"
+    return "ok" if await vectors.ping() else "unavailable"

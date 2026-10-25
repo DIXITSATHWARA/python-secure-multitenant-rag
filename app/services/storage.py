@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Protocol
 
+from app.core.config import Settings
+
 
 class StorageBackend(Protocol):
     """Where original files live. Local disk in dev; an S3-compatible class in production."""
@@ -43,3 +45,9 @@ class LocalStorage:
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self._path(key).unlink, True)  # missing_ok=True
+
+
+def build_storage(settings: Settings) -> StorageBackend:
+    if settings.storage_backend == "local":
+        return LocalStorage(Path(settings.local_storage_path))
+    raise RuntimeError(f"Unsupported STORAGE_BACKEND: {settings.storage_backend}")

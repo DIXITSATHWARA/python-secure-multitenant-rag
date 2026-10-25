@@ -1,13 +1,14 @@
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Document, DocumentStatus
 
 
 class DocumentRepository:
-    """Every read that serves a user filters by user_id inside the SQL itself."""
+    """User-facing reads filter by user_id inside the SQL itself. The worker-only methods
+    at the bottom are NOT scoped to a user and must never be called from API code."""
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
@@ -84,3 +85,34 @@ class DocumentRepository:
             .offset(offset)
         )
         return list(rows.scalars().all()), total
+
+    # ---- worker-only (not scoped to a user) -------------------------------------------
+
+    async def get_for_worker(
+        self, document_id: uuid.UUID, *, for_update: bool = False
+    ) -> Document | None:
+        stmt = select(Document).where(Document.id == document_id)
+        if for_update:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_status(self, document_id: uuid.UUID) -> DocumentStatus | None:
+        stmt = select(Document.status).where(Document.id == document_id)
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def mark_failed(self, document_id: uuid.UUID, message: str) -> None:
+        """Never resurrects a document that is being deleted."""
+        await self.db.execute(
+            update(Document)
+            .where(Document.id == document_id, Document.status != DocumentStatus.DELETING)
+            .values(status=DocumentStatus.FAILED, error_message=message[:1000])
+        )
+
+    async def delete_if_deleting(self, document_id: uuid.UUID) -> None:
+        """Removes the row (and, via ON DELETE CASCADE, its jobs). The status guard means a
+        live document can never be deleted by a stray job."""
+        await self.db.execute(
+            delete(Document).where(
+                Document.id == document_id, Document.status == DocumentStatus.DELETING
+            )
+        )

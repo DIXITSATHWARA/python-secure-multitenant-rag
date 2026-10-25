@@ -8,19 +8,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.error_handlers import register_exception_handlers
+from app.core.exceptions import ExternalServiceError
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
 from app.db.session import engine
+from app.services.clients import build_qdrant_client
+from app.services.vector_service import VectorService
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logger.info("Starting %s v%s (%s)", settings.app_name, settings.app_version, settings.app_env)
+
+    qdrant = build_qdrant_client(settings)
+    vectors = VectorService(qdrant, settings)
+    app.state.vectors = vectors
+    try:
+        # Creates the collection only if it is missing. A dimension mismatch (RuntimeError)
+        # is a configuration bug, so it deliberately stops startup.
+        await vectors.ensure_collection()
+    except ExternalServiceError:
+        logger.warning("Qdrant is not reachable at startup; /health/ready will report it")
+
     yield
+
+    await qdrant.close()
     await engine.dispose()  # close pooled DB connections cleanly
     logger.info("Shutdown complete")
 

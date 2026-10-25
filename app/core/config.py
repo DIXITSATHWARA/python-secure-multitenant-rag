@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     qdrant_url: str
     qdrant_api_key: SecretStr
     qdrant_collection: str = "document_chunks"
+    qdrant_timeout_seconds: int = 30
 
     # OpenAI
     openai_api_key: SecretStr
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
     openai_embedding_dimensions: int = 1536
     openai_chat_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 30.0
+    openai_max_retries: int = 3
 
     # Auth
     jwt_secret_key: SecretStr
@@ -65,6 +67,17 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 150
 
+    # Processing / worker
+    embedding_batch_size: int = 64
+    max_chunks_per_document: int = 2000
+    max_pdf_pages: int = 500
+    max_extracted_chars: int = 5_000_000
+    worker_concurrency: int = 2
+    worker_poll_interval_seconds: float = 2.0
+    job_lease_seconds: int = 900
+    job_retry_base_seconds: int = 30
+    job_retry_max_seconds: int = 900
+
     # Retrieval
     retrieval_top_k: int = 5
     retrieval_score_threshold: float = 0.30
@@ -79,7 +92,7 @@ class Settings(BaseSettings):
         return self.max_upload_mb * 1024 * 1024
 
     @model_validator(mode="after")
-    def _validate_security_settings(self) -> Self:
+    def _validate_settings(self) -> Self:
         jwt_key = self.jwt_secret_key.get_secret_value()
         session_key = self.session_secret_key.get_secret_value()
         if len(jwt_key) < 32 or len(session_key) < 32:
@@ -91,6 +104,14 @@ class Settings(BaseSettings):
                 raise ValueError("COOKIE_SECURE must be true in production")
             if jwt_key == session_key:
                 raise ValueError("JWT_SECRET_KEY and SESSION_SECRET_KEY must differ")
+        if not 100 <= self.chunk_size <= 6000:
+            raise ValueError("CHUNK_SIZE must be between 100 and 6000 characters")
+        if not 0 <= self.chunk_overlap <= self.chunk_size // 2:
+            raise ValueError("CHUNK_OVERLAP must be between 0 and half of CHUNK_SIZE")
+        if not 1 <= self.embedding_batch_size <= 512:
+            raise ValueError("EMBEDDING_BATCH_SIZE must be between 1 and 512")
+        if self.worker_concurrency < 1:
+            raise ValueError("WORKER_CONCURRENCY must be at least 1")
         return self
 
 
