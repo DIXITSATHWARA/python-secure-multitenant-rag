@@ -63,6 +63,11 @@ class DocumentRepository:
         stmt = select(Document).where(Document.user_id == user_id, Document.idempotency_key == key)
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
+    async def count_for_user(self, user_id: uuid.UUID) -> int:
+        """All of the user's documents, including ones still being deleted."""
+        stmt = select(func.count()).select_from(Document).where(Document.user_id == user_id)
+        return (await self.db.execute(stmt)).scalar_one()
+
     async def list_owned(
         self,
         user_id: uuid.UUID,

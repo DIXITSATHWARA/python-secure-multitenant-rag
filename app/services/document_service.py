@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError, QuotaExceededError
 from app.models import Document, DocumentStatus, JobType, User
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.processing_job_repository import ProcessingJobRepository
@@ -54,6 +54,20 @@ class DocumentService:
             existing = await self.documents.get_by_idempotency_key(user.id, idempotency_key)
             if existing is not None:
                 return self._replay(existing, validated), False
+
+        if idempotency_key:
+            existing = await self.documents.get_by_idempotency_key(user.id, idempotency_key)
+            if existing is not None:
+                return self._replay(existing, validated), False
+
+        # A replay (above) is never blocked by the quota. Only genuinely new documents are.
+        if await self.documents.count_for_user(user.id) >= self.settings.max_documents_per_user:
+            raise QuotaExceededError(
+                f"You have reached the limit of {self.settings.max_documents_per_user} "
+                "documents. Delete some to upload more."
+            )
+
+        document_id = uuid.uuid4()
 
         document_id = uuid.uuid4()
         storage_key = f"{user.id}/{document_id}.{validated.file_type}"

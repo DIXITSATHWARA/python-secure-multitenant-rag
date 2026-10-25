@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from qdrant_client import AsyncQdrantClient
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.core.config import Settings
 from app.core.exceptions import ExternalServiceError
@@ -19,10 +19,11 @@ from app.models import (
     User,
 )
 from app.repositories.processing_job_repository import ProcessingJobRepository
-from app.services.errors import GENERIC_PROCESSING_FAILURE
+from app.services.errors import GENERIC_PROCESSING_FAILURE, PermanentProcessingError
 from app.services.vector_service import VectorService
 from app.workers.maintenance import purge_old_rows, recover_stale_jobs
 from app.workers.processor import DocumentProcessor, claim_job, compute_backoff
+from app.workers.runner import Worker
 from tests.helpers import files_on_disk
 
 DIMS = 8
@@ -585,3 +586,253 @@ def test_backoff_doubles_and_is_capped():
     assert compute_backoff(5, 30, 900) == 480
     assert compute_backoff(6, 30, 900) == 900
     assert compute_backoff(20, 30, 900) == 900
+
+
+# ---- failure recovery (Phase 7) --------------------------------------------------------
+
+
+async def test_cancelled_job_is_handed_back_without_using_an_attempt(
+    upload, alice, session_factory, processor, embeddings
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+
+    async def shutdown(call_number: int) -> None:
+        raise asyncio.CancelledError  # what a SIGTERM during processing looks like
+
+    embeddings.on_call = shutdown
+    job = await claim_job(session_factory, "w1")
+
+    with pytest.raises(asyncio.CancelledError):
+        await processor.run(job)
+
+    (row,) = await get_jobs(session_factory, doc_id)
+    assert row.status == JobStatus.QUEUED
+    assert row.attempts == 0
+    assert row.locked_by is None
+    embeddings.on_call = None
+    await drain(session_factory, processor)
+    assert (await get_doc(session_factory, doc_id)).status == DocumentStatus.COMPLETED
+
+
+async def test_qdrant_failure_mid_processing_is_retried_with_one_point_per_chunk(
+    upload, alice, session_factory, processor, vectors, qdrant, monkeypatch
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    real_upsert = vectors.upsert_chunks
+    calls = {"n": 0}
+
+    async def flaky_upsert(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise ExternalServiceError("Qdrant is down")
+        await real_upsert(**kwargs)
+
+    monkeypatch.setattr(vectors, "upsert_chunks", flaky_upsert)
+
+    await drain(session_factory, processor)
+
+    (job,) = await get_jobs(session_factory, doc_id)
+    assert (await get_doc(session_factory, doc_id)).status == DocumentStatus.PROCESSING
+    assert job.status == JobStatus.QUEUED
+    assert job.attempts == 1
+    assert await point_count(qdrant) == 4  # two batches of two were stored before the failure
+
+    await make_jobs_due(session_factory)
+    await drain(session_factory, processor)
+
+    doc = await get_doc(session_factory, doc_id)
+    assert doc.status == DocumentStatus.COMPLETED
+    assert await point_count(qdrant) == doc.chunk_count
+
+
+async def test_document_is_not_completed_when_the_stored_vector_count_is_wrong(
+    upload, alice, session_factory, processor, vectors, monkeypatch
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    real_count = vectors.count_document_points
+    calls = {"n": 0}
+
+    async def short_count(**kwargs):
+        calls["n"] += 1
+        real = await real_count(**kwargs)
+        return real - 1 if calls["n"] == 1 else real
+
+    monkeypatch.setattr(vectors, "count_document_points", short_count)
+
+    await drain(session_factory, processor)
+
+    (job,) = await get_jobs(session_factory, doc_id)
+    assert (await get_doc(session_factory, doc_id)).status == DocumentStatus.PROCESSING
+    assert job.status == JobStatus.QUEUED
+    assert job.last_error.startswith("ExternalServiceError")
+
+    await make_jobs_due(session_factory)
+    await drain(session_factory, processor)
+
+    assert (await get_doc(session_factory, doc_id)).status == DocumentStatus.COMPLETED
+
+
+async def test_permanent_embedding_error_fails_the_document_without_retries(
+    upload, alice, session_factory, processor, embeddings
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    embeddings.error = PermanentProcessingError("The document text could not be embedded.")
+
+    await drain(session_factory, processor)
+
+    doc = await get_doc(session_factory, doc_id)
+    (job,) = await get_jobs(session_factory, doc_id)
+    assert doc.status == DocumentStatus.FAILED
+    assert doc.error_message == "The document text could not be embedded."
+    assert job.status == JobStatus.FAILED
+    assert job.attempts == 1
+    assert embeddings.calls == 1
+
+
+async def test_vectors_are_cleaned_up_if_the_document_vanishes_mid_processing(
+    upload, alice, session_factory, processor, embeddings, qdrant
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+
+    async def vanish(call_number: int) -> None:
+        if call_number == 1:  # e.g. the account was deleted while the job ran
+            async with session_factory() as db:
+                await db.execute(delete(Document).where(Document.id == doc_id))
+                await db.commit()
+
+    embeddings.on_call = vanish
+
+    await drain(session_factory, processor)
+
+    assert await get_doc(session_factory, doc_id) is None
+    assert await point_count(qdrant) == 0  # the batch written after the row vanished is removed
+
+
+async def test_failed_file_delete_is_retried_after_the_vectors_are_already_gone(
+    api_client, upload, alice, session_factory, processor, storage, qdrant, monkeypatch
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    await drain(session_factory, processor)
+    real_delete = storage.delete
+    calls = {"n": 0}
+
+    async def flaky_delete(key):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk unavailable")
+        await real_delete(key)
+
+    monkeypatch.setattr(storage, "delete", flaky_delete)
+    await api_client.delete(f"/api/v1/documents/{doc_id}", headers=alice)
+
+    await drain(session_factory, processor)
+
+    assert (await get_doc(session_factory, doc_id)).status == DocumentStatus.DELETING
+    assert await point_count(qdrant) == 0
+    assert len(files_on_disk(storage)) == 1
+
+    await make_jobs_due(session_factory)
+    await drain(session_factory, processor)
+
+    assert await get_doc(session_factory, doc_id) is None
+    assert files_on_disk(storage) == []
+
+
+async def test_exhausted_delete_job_leaves_the_document_hidden_until_requeued(
+    api_client, upload, alice, session_factory, processor, vectors, monkeypatch
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    await drain(session_factory, processor)
+    real_delete = vectors.delete_document
+    state = {"broken": True}
+
+    async def maybe_broken_delete(**kwargs):
+        if state["broken"]:
+            raise ExternalServiceError("Qdrant is down")
+        await real_delete(**kwargs)
+
+    monkeypatch.setattr(vectors, "delete_document", maybe_broken_delete)
+    await api_client.delete(f"/api/v1/documents/{doc_id}", headers=alice)
+    async with session_factory() as db:
+        await db.execute(
+            update(ProcessingJob)
+            .where(ProcessingJob.job_type == JobType.DELETE)
+            .values(max_attempts=1)
+        )
+        await db.commit()
+
+    await drain(session_factory, processor)
+
+    jobs = await get_jobs(session_factory, doc_id)
+    assert next(j for j in jobs if j.job_type == JobType.DELETE).status == JobStatus.FAILED
+    assert (await get_doc(session_factory, doc_id)).status == DocumentStatus.DELETING
+    hidden = await api_client.get(f"/api/v1/documents/{doc_id}", headers=alice)
+    assert hidden.status_code == 404  # still invisible to the user
+
+    state["broken"] = False  # the operator fixes Qdrant, then requeues (scripts.requeue_jobs)
+    async with session_factory() as db:
+        await db.execute(
+            update(ProcessingJob)
+            .where(ProcessingJob.status == JobStatus.FAILED)
+            .values(
+                status=JobStatus.QUEUED, attempts=0, run_after=datetime.now(UTC), last_error=None
+            )
+        )
+        await db.commit()
+    await drain(session_factory, processor)
+
+    assert await get_doc(session_factory, doc_id) is None
+
+
+async def test_worker_loop_processes_jobs_and_stops_cleanly(
+    upload, alice, session_factory, processor, worker_settings
+):
+    doc_id = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    fast = worker_settings.model_copy(
+        update={"worker_poll_interval_seconds": 0.05, "worker_concurrency": 1}
+    )
+    stop = asyncio.Event()
+    task = asyncio.create_task(Worker(fast, session_factory, processor).run(stop))
+    try:
+        async with asyncio.timeout(20):
+            while (await get_doc(session_factory, doc_id)).status != DocumentStatus.COMPLETED:
+                await asyncio.sleep(0.1)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=10)  # the loops exit promptly on shutdown
+
+    assert [j.status for j in await get_jobs(session_factory, doc_id)] == [JobStatus.SUCCEEDED]
+
+
+async def test_worker_loop_survives_a_crashing_job(
+    upload, alice, session_factory, processor, worker_settings, monkeypatch
+):
+    first = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    second = await _upload_doc(upload, alice, content=LONG_TEXT.encode())
+    real_run = processor.run
+    calls = {"n": 0}
+
+    async def crashing_run(job):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("unexpected bug")
+        await real_run(job)
+
+    monkeypatch.setattr(processor, "run", crashing_run)
+    fast = worker_settings.model_copy(
+        update={"worker_poll_interval_seconds": 0.05, "worker_concurrency": 1}
+    )
+    stop = asyncio.Event()
+    task = asyncio.create_task(Worker(fast, session_factory, processor).run(stop))
+    try:
+        async with asyncio.timeout(20):
+            while (await get_doc(session_factory, second)).status != DocumentStatus.COMPLETED:
+                await asyncio.sleep(0.1)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=10)
+
+    (crashed,) = await get_jobs(session_factory, first)
+    # The crashed job stays RUNNING until its lease expires; recover_stale_jobs requeues it.
+    assert crashed.status == JobStatus.RUNNING
+    assert (await get_doc(session_factory, first)).status == DocumentStatus.PENDING

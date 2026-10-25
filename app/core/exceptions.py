@@ -29,6 +29,12 @@ class ForbiddenError(AppError):
     default_message = "You do not have permission to perform this action."
 
 
+class QuotaExceededError(AppError):
+    status_code = 403
+    code = "quota_exceeded"
+    default_message = "You have reached your usage limit."
+
+
 class NotFoundError(AppError):
     status_code = 404
     code = "not_found"

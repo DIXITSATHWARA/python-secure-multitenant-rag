@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import uuid
@@ -519,3 +520,44 @@ async def test_question_and_document_text_are_not_logged(api_client, alice, seed
     assert resp.status_code == 200
     assert "zz-question-marker-17" not in caplog.text
     assert "private document" not in caplog.text
+
+
+# ---- unicode and concurrency ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "बिल्लियाँ cats कितना सोती हैं?",
+        "猫 cats 为什么睡这么多？",
+        "Why do cats sleep so much? 🐱😴",
+        "لماذا تنام cats كثيرا؟",
+    ],
+)
+async def test_questions_in_any_script_are_accepted_and_echoed(
+    api_client, alice, seed, chat, question
+):
+    await seed(alice, "Pets", ["Cats sleep a lot."])
+
+    resp = await ask(api_client, alice, question)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["question"] == question
+    assert body["context_found"] is True
+    assert question in chat.calls[0][1]
+
+
+async def test_concurrent_asks_from_different_users_never_mix_results(api_client, alice, bob, seed):
+    alice_doc = await seed(alice, "Alice cats", ["Cats of Alice purr."])
+    bob_doc = await seed(bob, "Bob cats", ["Cats of Bob hiss."])
+
+    responses = await asyncio.gather(
+        *[ask(api_client, headers) for _ in range(5) for headers in (alice, bob)]
+    )
+
+    assert {r.status_code for r in responses} == {200}
+    for response in responses[0::2]:  # Alice's requests
+        assert [s["document_id"] for s in response.json()["sources"]] == [str(alice_doc)]
+    for response in responses[1::2]:  # Bob's requests
+        assert [s["document_id"] for s in response.json()["sources"]] == [str(bob_doc)]

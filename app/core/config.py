@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     retrieval_score_threshold: float = 0.30
     max_context_chars: int = 8000
 
+    # Rate limiting, quotas and request limits
+    rate_limit_enabled: bool = True
+    rate_limit_ask_per_minute: int = 20
+    rate_limit_ask_per_hour: int = 300
+    rate_limit_upload_per_minute: int = 10
+    rate_limit_upload_per_hour: int = 100
+    rate_limit_auth_per_minute: int = 30  # per IP
+    rate_limit_upload_ip_per_minute: int = 60  # per IP, checked before the body is parsed
+    trusted_proxy_count: int = 0  # 0 = never trust X-Forwarded-For
+    max_documents_per_user: int = 200
+    max_request_body_kb: int = 64
+
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
@@ -120,6 +132,22 @@ class Settings(BaseSettings):
             raise ValueError("RETRIEVAL_SCORE_THRESHOLD must be between 0 and 1")
         if self.max_context_chars < 500:
             raise ValueError("MAX_CONTEXT_CHARS must be at least 500")
+        rate_limits = (
+            self.rate_limit_ask_per_minute,
+            self.rate_limit_ask_per_hour,
+            self.rate_limit_upload_per_minute,
+            self.rate_limit_upload_per_hour,
+            self.rate_limit_auth_per_minute,
+            self.rate_limit_upload_ip_per_minute,
+        )
+        if min(rate_limits) < 0:
+            raise ValueError("RATE_LIMIT_* values must be 0 (disabled) or positive")
+        if not 0 <= self.trusted_proxy_count <= 5:
+            raise ValueError("TRUSTED_PROXY_COUNT must be between 0 and 5")
+        if self.max_documents_per_user < 1:
+            raise ValueError("MAX_DOCUMENTS_PER_USER must be at least 1")
+        if not 1 <= self.max_request_body_kb <= 1024:
+            raise ValueError("MAX_REQUEST_BODY_KB must be between 1 and 1024")
         return self
 
 

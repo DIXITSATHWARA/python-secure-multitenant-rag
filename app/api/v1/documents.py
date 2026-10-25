@@ -1,9 +1,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Header, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Response, UploadFile
 
 from app.api.deps import AppSettings, CurrentUser, DocumentSvc
+from app.api.limits import limit_upload
 from app.models import Document, DocumentStatus
 from app.schemas.common import ErrorResponse
 from app.schemas.document import DocumentPage, DocumentRead, DocumentStatusRead
@@ -19,13 +20,16 @@ NOT_FOUND = {404: {"model": ErrorResponse, "description": "Missing, or not yours
     "",
     response_model=DocumentRead,
     status_code=202,
+    dependencies=[Depends(limit_upload)],
     summary="Upload a document",
     responses={
         200: {"model": DocumentRead, "description": "Idempotent replay of an earlier upload"},
         400: {"model": ErrorResponse, "description": "Empty file or content doesn't match type"},
+        403: {"model": ErrorResponse, "description": "Document quota reached"},
         409: {"model": ErrorResponse, "description": "Idempotency-Key reused with another file"},
         413: {"model": ErrorResponse},
         415: {"model": ErrorResponse, "description": "File type not allowed"},
+        429: {"model": ErrorResponse, "description": "Too many uploads; see Retry-After"},
         **UNAUTHORIZED,
     },
 )

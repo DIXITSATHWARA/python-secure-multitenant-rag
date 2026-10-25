@@ -6,11 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.core.body_limit import BodyLimitMiddleware
 from app.core.config import get_settings
 from app.core.error_handlers import register_exception_handlers
 from app.core.exceptions import ExternalServiceError
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
+from app.core.rate_limit import IpRateLimitMiddleware, SlidingWindowLimiter, build_ip_rules
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.upload_limit import MULTIPART_OVERHEAD_BYTES, UploadSizeLimitMiddleware
 from app.db.session import engine
 from app.services.clients import build_openai_client, build_qdrant_client
@@ -59,12 +62,26 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if docs_enabled else None,
     )
 
-    # Middleware added later wraps earlier ones: upload limit is innermost, then CORS
-    # (so 413 responses carry CORS headers), then RequestContext (outermost).
+    # Created here (not in the lifespan) so every app instance has its own limiter.
+    limiter = SlidingWindowLimiter()
+    app.state.limiter = limiter
+
+    upload_path = f"{settings.api_v1_prefix}/documents"
+    upload_max = settings.max_upload_bytes + MULTIPART_OVERHEAD_BYTES
+
+    # add_middleware wraps: the LAST one added is the outermost. Request path, outer to inner:
+    # RequestContext > SecurityHeaders > CORS > IpRateLimit > BodyLimit > UploadSizeLimit > app
+    app.add_middleware(UploadSizeLimitMiddleware, path=upload_path, max_bytes=upload_max)
     app.add_middleware(
-        UploadSizeLimitMiddleware,
-        path=f"{settings.api_v1_prefix}/documents",
-        max_bytes=settings.max_upload_bytes + MULTIPART_OVERHEAD_BYTES,
+        BodyLimitMiddleware,
+        default_max_bytes=settings.max_request_body_kb * 1024,
+        overrides={upload_path: upload_max},
+    )
+    app.add_middleware(
+        IpRateLimitMiddleware,
+        limiter=limiter,
+        rules=build_ip_rules(settings) if settings.rate_limit_enabled else [],
+        trusted_proxies=settings.trusted_proxy_count,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -72,8 +89,9 @@ def create_app() -> FastAPI:
         allow_credentials=True,  # needed for the HttpOnly refresh-token cookie
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
-        expose_headers=["X-Request-ID", "Location"],
+        expose_headers=["X-Request-ID", "Location", "Retry-After"],
     )
+    app.add_middleware(SecurityHeadersMiddleware, production=settings.is_production)
     app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
