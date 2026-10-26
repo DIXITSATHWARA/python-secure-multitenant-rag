@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.v1.router import api_router
 from app.core.body_limit import BodyLimitMiddleware
@@ -92,6 +93,8 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID", "Location", "Retry-After"],
     )
     app.add_middleware(SecurityHeadersMiddleware, production=settings.is_production)
+    if settings.allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
     app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)

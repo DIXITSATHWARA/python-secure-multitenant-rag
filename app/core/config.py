@@ -66,6 +66,18 @@ class Settings(BaseSettings):
     allowed_file_types: list[str] = ["pdf", "txt"]
     storage_backend: str = "local"
     local_storage_path: str = "./storage"
+    # S3-compatible storage (used when STORAGE_BACKEND=s3). Leave the keys empty to use the
+    # platform's own credentials (for example an IAM role).
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_endpoint_url: str = ""
+    s3_access_key_id: str = ""
+    s3_secret_access_key: SecretStr = SecretStr("")
+    s3_prefix: str = ""
+    allow_local_storage_in_production: bool = False
+
+    # Deployment. Empty list = no Host-header check (development only).
+    allowed_hosts: list[str] = []
     chunk_size: int = 1000
     chunk_overlap: int = 150
 
@@ -104,6 +116,29 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    def _validate_production(self) -> None:
+        """Production refuses to start with settings that are unsafe or can't work."""
+        if not self.cors_origins or any(not o.startswith("https://") for o in self.cors_origins):
+            raise ValueError("CORS_ORIGINS must list https:// origins only in production")
+        if not self.backend_base_url.startswith("https://"):
+            raise ValueError("BACKEND_BASE_URL must be an https:// URL in production")
+        if not self.google_redirect_uri.startswith("https://"):
+            raise ValueError("GOOGLE_REDIRECT_URI must be an https:// URL in production")
+        if not self.frontend_redirect_url.startswith("https://"):
+            raise ValueError("FRONTEND_REDIRECT_URL must be an https:// URL in production")
+        if not self.allowed_hosts or "*" in self.allowed_hosts:
+            raise ValueError(
+                "ALLOWED_HOSTS must list your real hostnames (no wildcard) in production"
+            )
+        if self.storage_backend == "local" and not self.allow_local_storage_in_production:
+            raise ValueError(
+                "STORAGE_BACKEND=local is not safe in production "
+                "(the API and worker need shared storage). Use s3, or set "
+                "ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true for a single machine."
+            )
+        if not self.google_client_id or not self.google_client_secret.get_secret_value():
+            raise ValueError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required in production")
 
     @model_validator(mode="after")
     def _validate_settings(self) -> Self:
@@ -148,6 +183,12 @@ class Settings(BaseSettings):
             raise ValueError("MAX_DOCUMENTS_PER_USER must be at least 1")
         if not 1 <= self.max_request_body_kb <= 1024:
             raise ValueError("MAX_REQUEST_BODY_KB must be between 1 and 1024")
+        if self.storage_backend not in ("local", "s3"):
+            raise ValueError("STORAGE_BACKEND must be 'local' or 's3'")
+        if self.storage_backend == "s3" and not self.s3_bucket:
+            raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
+        if self.is_production:
+            self._validate_production()
         return self
 
 

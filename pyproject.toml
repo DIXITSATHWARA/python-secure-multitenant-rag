@@ -36,6 +36,8 @@ dev = [
     "pytest-cov>=5.0",
 ]
 
+s3 = ["boto3>=1.35"]
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 

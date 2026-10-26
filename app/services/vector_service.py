@@ -15,6 +15,7 @@ from app.core.exceptions import ExternalServiceError
 from app.services.chunking import Chunk
 
 logger = logging.getLogger(__name__)
+SCROLL_PAGE_SIZE = 1000
 
 
 def chunk_point_id(document_id: uuid.UUID, index: int) -> str:
@@ -164,6 +165,31 @@ class VectorService:
                 exact=True,
             )
         return result.count
+
+    async def list_document_owners(self) -> dict[uuid.UUID, uuid.UUID]:
+        """{document_id: user_id} for every document that has points. Pages through the whole
+        collection, so it is a maintenance operation (the orphan sweep), never a request path."""
+        await self.ensure_collection()
+        owners: dict[uuid.UUID, uuid.UUID] = {}
+        offset = None
+        with _upstream("scroll"):
+            while True:
+                points, offset = await self._client.scroll(
+                    collection_name=self._collection,
+                    limit=SCROLL_PAGE_SIZE,
+                    offset=offset,
+                    with_payload=["document_id", "user_id"],
+                    with_vectors=False,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    try:
+                        owners[uuid.UUID(payload["document_id"])] = uuid.UUID(payload["user_id"])
+                    except (KeyError, ValueError, TypeError):
+                        continue  # malformed points are ignored, and therefore never deleted
+                if offset is None:
+                    break
+        return owners
 
     async def search(
         self,
