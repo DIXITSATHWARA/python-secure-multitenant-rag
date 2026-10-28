@@ -1,8 +1,5 @@
 # python-secure-multitenant-rag
 
-
-[![CI](https://github.com/DIXITSATHWARA/python-secure-multitenant-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/DIXITSATHWARA/python-secure-multitenant-rag/actions/workflows/ci.yml)
-
 A secure, multi-tenant Retrieval-Augmented Generation (RAG) backend. Users sign in with Google, upload PDF or TXT documents, and ask questions answered only from their own documents, with citations.
 
 ## Features
