@@ -1,5 +1,7 @@
 # python-secure-multitenant-rag
 
+[![CI](https://github.com/DIXITSATHWARA/python-secure-multitenant-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/DIXITSATHWARA/python-secure-multitenant-rag/actions/workflows/ci.yml)
+
 A secure, multi-tenant Retrieval-Augmented Generation (RAG) backend. Users sign in with Google, upload PDF or TXT documents, and ask questions answered only from their own documents, with citations.
 
 ## Features
@@ -11,6 +13,34 @@ A secure, multi-tenant Retrieval-Augmented Generation (RAG) backend. Users sign 
 - **RAG**: owner-filtered vector search, grounded answers, `[n]` citations, a refusal when evidence is missing, prompt-injection defenses
 - **Hardening**: rate limits, body-size caps, security headers, host allow-list, production config validation, log hygiene
 - **Operations**: S3-compatible storage, orphan sweep, reindex, account deletion, queue health report
+
+## Demo
+
+| Swagger UI (`/docs`) | Grounded answer with citations |
+|---|---|
+| ![API docs](docs/images/swagger.png) | ![Ask](docs/images/ask.png) |
+
+Example:
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/ask \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"question": "What skills are listed in the resume?"}'
+```
+
+```json
+{
+  "question": "What skills are listed in the resume?",
+  "answer": "The resume lists ... [1][2]",
+  "context_found": true,
+  "sources": [
+    {"ref": 1, "document_id": "…", "document_name": "Resume", "chunk_index": 2,
+     "content": "…", "score": 0.61}
+  ]
+}
+```
+
+If the documents don't contain the answer, the API replies `context_found: false` with no sources instead of guessing.
 
 ## Tech stack
 

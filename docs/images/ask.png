@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" viewBox="0 0 900 560" role="img" aria-label="Example response from POST /api/v1/ask">
+  <style>
+    .mono { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 13px; fill: #d4d4d4; white-space: pre; }
+    .k { fill: #9cdcfe; }
+    .s { fill: #ce9178; }
+    .n { fill: #b5cea8; }
+    .b { fill: #569cd6; }
+    .p { fill: #808080; }
+    .label { font-family: "Segoe UI", Arial, sans-serif; font-size: 13px; fill: #c9d1d9; }
+    .ok { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; font-weight: 700; fill: #ffffff; }
+  </style>
+
+  <rect width="900" height="560" rx="12" fill="#1e1e1e"/>
+  <rect width="900" height="44" rx="12" fill="#2d2d30"/>
+  <rect y="30" width="900" height="14" fill="#2d2d30"/>
+  <circle cx="24" cy="22" r="6" fill="#ff5f56"/>
+  <circle cx="44" cy="22" r="6" fill="#ffbd2e"/>
+  <circle cx="64" cy="22" r="6" fill="#27c93f"/>
+  <text x="90" y="27" class="label">POST /api/v1/ask</text>
+  <rect x="796" y="11" width="84" height="22" rx="11" fill="#2ea043"/>
+  <text x="838" y="27" text-anchor="middle" class="ok">200 OK</text>
+
+  <g transform="translate(28,78)">
+    <text class="mono" y="0">{</text>
+    <text class="mono" y="22">  <tspan class="k">"question"</tspan><tspan class="p">: </tspan><tspan class="s">"What skills are listed in the resume?"</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="44">  <tspan class="k">"answer"</tspan><tspan class="p">: </tspan><tspan class="s">"The skills listed include:</tspan></text>
+    <text class="mono" y="66"><tspan class="s">    - Backend: Node.js (Express), Laravel, PHP, Python, REST API Design</tspan></text>
+    <text class="mono" y="88"><tspan class="s">    - AI / LLM: OpenAI (GPT), Prompt Engineering, RAG, Vector Search (Qdrant)</tspan></text>
+    <text class="mono" y="110"><tspan class="s">    - Databases: MySQL, PostgreSQL, MongoDB</tspan></text>
+    <text class="mono" y="132"><tspan class="s">    - Cloud &amp; DevOps: AWS (Lambda, EC2, S3, SQS), Docker, CI/CD, Git [2][4]."</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="154">  <tspan class="k">"context_found"</tspan><tspan class="p">: </tspan><tspan class="b">true</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="176">  <tspan class="k">"sources"</tspan><tspan class="p">: [</tspan></text>
+
+    <text class="mono" y="198">    {</text>
+    <text class="mono" y="220">      <tspan class="k">"ref"</tspan><tspan class="p">: </tspan><tspan class="n">1</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="242">      <tspan class="k">"document_name"</tspan><tspan class="p">: </tspan><tspan class="s">"Sample CV"</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="264">      <tspan class="k">"chunk_index"</tspan><tspan class="p">: </tspan><tspan class="n">2</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="286">      <tspan class="k">"content"</tspan><tspan class="p">: </tspan><tspan class="s">"...Built resume-scoring services on AWS Lambda,</tspan></text>
+    <text class="mono" y="308"><tspan class="s">                  triggered asynchronously through AWS SQS..."</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="330">      <tspan class="k">"score"</tspan><tspan class="p">: </tspan><tspan class="n">0.396</tspan></text>
+    <text class="mono" y="352">    }<tspan class="p">,</tspan></text>
+
+    <text class="mono" y="374">    {</text>
+    <text class="mono" y="396">      <tspan class="k">"ref"</tspan><tspan class="p">: </tspan><tspan class="n">2</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="418">      <tspan class="k">"document_name"</tspan><tspan class="p">: </tspan><tspan class="s">"Sample CV"</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="440">      <tspan class="k">"chunk_index"</tspan><tspan class="p">: </tspan><tspan class="n">1</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="462">      <tspan class="k">"content"</tspan><tspan class="p">: </tspan><tspan class="s">"TECHNICAL SKILLS  Backend: Node.js (Express), Laravel..."</tspan><tspan class="p">,</tspan></text>
+    <text class="mono" y="484">      <tspan class="k">"score"</tspan><tspan class="p">: </tspan><tspan class="n">0.52</tspan></text>
+    <text class="mono" y="506">    }</text>
+    <text class="mono" y="528">  ]  <tspan class="p">...</tspan></text>
+  </g>
+</svg>
