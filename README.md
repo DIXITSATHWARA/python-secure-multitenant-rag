@@ -17,8 +17,8 @@ A secure, multi-tenant Retrieval-Augmented Generation (RAG) backend. Users sign 
 ## Demo
 
 | Swagger UI (`/docs`) | Grounded answer with citations |
-|---|---|
-| ![API docs](docs/images/swagger.png) | ![Ask](docs/images/ask.png) |
+|:---:|:---:|
+| ![Swagger UI API documentation](docs/images/swagger.png) | ![Grounded answer with citations](docs/images/ask.png) |
 
 Example:
 
